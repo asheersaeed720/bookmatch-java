@@ -22,17 +22,13 @@ public class BookmatchApplication implements CommandLineRunner {
         SearchEngineService searchService = new SearchEngineService();
 
         String indexDirectoryPath = "./lucene-index";
-        String samplePdfPath = "./The Maze Runner.pdf";
-        String bookTitle = "The Maze Runner";
+        // Drop any number of PDF books into this folder; they all get indexed.
+        String booksFolderPath = "./books";
 
         try {
-            // Step A: Extract text from PDF
-            System.out.println("Extracting text from PDF...");
-            String content = searchService.extractTextFromPdf(samplePdfPath);
-
-            // Step B: Index the extracted text
-            System.out.println("Writing content to Lucene index...");
-            searchService.indexBook(bookTitle, content, indexDirectoryPath);
+            // Step A + B: Extract text from every PDF in the books folder and index it
+            System.out.println("Indexing all PDFs in '" + booksFolderPath + "'...");
+            searchService.indexBooksFolder(booksFolderPath, indexDirectoryPath);
 
             // Step C: Interactive search loop
             Scanner scanner = new Scanner(System.in);
