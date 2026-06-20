@@ -10,10 +10,7 @@ import org.apache.tika.Tika;
 
 import java.io.File;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -21,16 +18,7 @@ import java.util.regex.Pattern;
 
 public class SearchEngineService {
 
-    // How many words go into a single searchable chunk/document.
-    private static final int WORDS_PER_CHUNK = 150;
-
-    // How many neighbouring chunks to include on each side of the best match
-    // when reconstructing the "complete topic" passage.
-    private static final int CONTEXT_CHUNKS = 3;
-
-    // Keeps each book's chunks in order (title -> ordered chunks) so we can
-    // stitch neighbouring chunks back together into a full passage after a search.
-    private final Map<String, List<String>> bookChunks = new LinkedHashMap<>();
+    private final TextChunker chunker = new TextChunker();
 
     // 1. Extract raw text from a PDF file using Apache Tika
     public String extractTextFromPdf(String pdfPath) throws Exception {
@@ -83,9 +71,7 @@ public class SearchEngineService {
 
     // Split one book's text into chunks and add each chunk as a document.
     private int addBookToIndex(IndexWriter writer, String title, String rawContent) throws Exception {
-        List<String> chunks = chunkText(rawContent);
-        // Remember the ordered chunks so we can rebuild full passages during search.
-        bookChunks.put(title, chunks);
+        List<String> chunks = chunker.chunkAndStore(title, rawContent);
         int chunkNumber = 0;
         for (String chunk : chunks) {
             Document doc = new Document();
@@ -128,7 +114,7 @@ public class SearchEngineService {
 
         // Reconstruct the COMPLETE passage: the best chunk plus its neighbours,
         // then tidy it into a clean, readable paragraph for the user.
-        String passage = getCompletePassage(bestTitle, bestChunk);
+        String passage = chunker.getCompletePassage(bestTitle, bestChunk);
         String readable = toReadableParagraph(passage, textQuery);
         System.out.println("\n===== Complete topic from '" + bestTitle + "' "
                 + "(around chunk " + bestChunk + ") =====\n");
@@ -147,23 +133,6 @@ public class SearchEngineService {
         }
 
         reader.close();
-    }
-
-    // Stitch the best-matching chunk together with its neighbouring chunks to
-    // rebuild the full, continuous passage covering the searched topic.
-    private String getCompletePassage(String title, int centerChunk) {
-        List<String> chunks = bookChunks.get(title);
-        if (chunks == null || chunks.isEmpty()) {
-            return "(content unavailable)";
-        }
-        int start = Math.max(0, centerChunk - CONTEXT_CHUNKS);
-        int end = Math.min(chunks.size() - 1, centerChunk + CONTEXT_CHUNKS);
-
-        StringBuilder passage = new StringBuilder();
-        for (int i = start; i <= end; i++) {
-            passage.append(chunks.get(i)).append(' ');
-        }
-        return passage.toString().trim();
     }
 
     // Turn a raw extracted passage into a clean paragraph a human can read.
@@ -258,33 +227,6 @@ public class SearchEngineService {
             lineLength += word.length();
         }
         return out.toString();
-    }
-
-    // Split text into chunks of roughly WORDS_PER_CHUNK words each.
-    private List<String> chunkText(String text) {
-        List<String> chunks = new ArrayList<>();
-        if (text == null) {
-            return chunks;
-        }
-        String[] words = text.trim().split("\\s+");
-        StringBuilder current = new StringBuilder();
-        int count = 0;
-        for (String word : words) {
-            if (word.isEmpty()) {
-                continue;
-            }
-            current.append(word).append(' ');
-            count++;
-            if (count >= WORDS_PER_CHUNK) {
-                chunks.add(current.toString().trim());
-                current.setLength(0);
-                count = 0;
-            }
-        }
-        if (current.length() > 0) {
-            chunks.add(current.toString().trim());
-        }
-        return chunks;
     }
 
     // Build a short snippet of text around the first occurrence of any query word.
