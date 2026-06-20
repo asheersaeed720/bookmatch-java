@@ -126,11 +126,13 @@ public class SearchEngineService {
         String bestTitle = bestDoc.get("title");
         int bestChunk = Integer.parseInt(bestDoc.get("chunk"));
 
-        // Reconstruct the COMPLETE passage: the best chunk plus its neighbours.
+        // Reconstruct the COMPLETE passage: the best chunk plus its neighbours,
+        // then tidy it into a clean, readable paragraph for the user.
         String passage = getCompletePassage(bestTitle, bestChunk);
+        String readable = toReadableParagraph(passage, textQuery);
         System.out.println("\n===== Complete topic from '" + bestTitle + "' "
                 + "(around chunk " + bestChunk + ") =====\n");
-        System.out.println(passage);
+        System.out.println(wrapForTerminal(readable, 100));
         System.out.println("\n=========================================================");
 
         // Also list other places the topic appears, so the user can explore further.
@@ -162,6 +164,100 @@ public class SearchEngineService {
             passage.append(chunks.get(i)).append(' ');
         }
         return passage.toString().trim();
+    }
+
+    // Turn a raw extracted passage into a clean paragraph a human can read.
+    // PDF text comes out with hard line breaks mid-sentence, words hyphenated
+    // across lines, page numbers/headers, and ragged spacing; we fix those and
+    // trim the result to whole sentences so it starts and ends cleanly.
+    private String toReadableParagraph(String raw, String textQuery) {
+        if (raw == null || raw.isEmpty()) {
+            return "(content unavailable)";
+        }
+
+        String text = raw;
+        // Re-join words that were hyphenated across a line break: "exam-\nple" -> "example".
+        text = text.replaceAll("(?<=\\p{L})-\\s*\\n\\s*(?=\\p{L})", "");
+        // Collapse every run of whitespace (including newlines) into a single space.
+        text = text.replaceAll("\\s+", " ");
+        // Drop stray standalone numbers left behind by page numbers/headers.
+        text = text.replaceAll("\\s+\\d{1,4}\\s+", " ");
+        // Tidy spacing around punctuation: no space before, exactly one after.
+        text = text.replaceAll("\\s+([,.;:!?])", "$1");
+        text = text.replaceAll("([,.;:!?])(?=\\p{L})", "$1 ");
+        text = text.trim();
+
+        // Trim to whole sentences so the paragraph doesn't start or end mid-thought,
+        // while making sure the sentence(s) mentioning the search term are kept.
+        String trimmed = trimToSentences(text, textQuery);
+        return trimmed.isEmpty() ? text : trimmed;
+    }
+
+    // Keep the passage from the start of the sentence before the first query
+    // match to the end of the sentence after the last match, so it reads as a
+    // complete thought around the topic the user searched for.
+    private String trimToSentences(String text, String textQuery) {
+        int firstHit = -1;
+        int lastHit = -1;
+        for (String term : textQuery.toLowerCase().split("\\s+")) {
+            if (term.isEmpty()) {
+                continue;
+            }
+            Matcher m = Pattern.compile(Pattern.quote(term), Pattern.CASE_INSENSITIVE).matcher(text);
+            while (m.find()) {
+                if (firstHit < 0 || m.start() < firstHit) {
+                    firstHit = m.start();
+                }
+                if (m.end() > lastHit) {
+                    lastHit = m.end();
+                }
+            }
+        }
+        if (firstHit < 0) {
+            return text; // No match in the cleaned text; return it as-is.
+        }
+
+        // Walk back to the start of the sentence containing the first match.
+        int start = 0;
+        for (int i = firstHit - 1; i >= 0; i--) {
+            char c = text.charAt(i);
+            if (c == '.' || c == '!' || c == '?') {
+                start = i + 1;
+                break;
+            }
+        }
+        // Walk forward to the end of the sentence containing the last match.
+        int end = text.length();
+        for (int i = lastHit; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '.' || c == '!' || c == '?') {
+                end = i + 1;
+                break;
+            }
+        }
+        return text.substring(start, end).trim();
+    }
+
+    // Soft-wrap a paragraph at word boundaries so long lines stay readable in a
+    // terminal, without splitting words across lines.
+    private String wrapForTerminal(String text, int maxWidth) {
+        StringBuilder out = new StringBuilder();
+        int lineLength = 0;
+        for (String word : text.split(" ")) {
+            if (word.isEmpty()) {
+                continue;
+            }
+            if (lineLength > 0 && lineLength + 1 + word.length() > maxWidth) {
+                out.append('\n');
+                lineLength = 0;
+            } else if (lineLength > 0) {
+                out.append(' ');
+                lineLength++;
+            }
+            out.append(word);
+            lineLength += word.length();
+        }
+        return out.toString();
     }
 
     // Split text into chunks of roughly WORDS_PER_CHUNK words each.
